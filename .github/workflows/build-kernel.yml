@@ -20,15 +20,14 @@ jobs:
           sudo apt-get install -y \
             git bc bison build-essential ccache curl flex \
             libssl-dev libncurses-dev libelf-dev python3 \
-            rsync unzip zip lz4 zstd wget
+            rsync unzip zip lz4 zstd \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
 
-      - name: Download AOSP Clang Toolchain
-        run: |
-          mkdir -p toolchain
-          cd toolchain
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r488901.tar.gz
-          tar -xf clang-r488901.tar.gz
-          cd ..
+      - name: Setup Clang Toolchain
+        uses: Rikais/setup-clang@v1
+        with:
+          version: '17'
 
       - name: Setup Ccache
         uses: actions/cache@v4
@@ -42,13 +41,16 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          export PATH="$(pwd)/toolchain/bin:$PATH"
-          export CC=clang
-          export CROSS_COMPILE=aarch64-linux-android-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-
+          
           make O=out surya_defconfig
-          make -j$(nproc) O=out
+          make -j$(nproc) O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LLVM=1 \
+            LLVM_IAS=1
 
       - name: Prepare AnyKernel3 Packaging
         run: |
