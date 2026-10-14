@@ -13,9 +13,14 @@ jobs:
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
       - name: Setup Build Dependencies
+        shell: bash
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             git bc bison build-essential ccache curl flex \
@@ -25,30 +30,48 @@ jobs:
             gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
 
       - name: Download Proton Clang
+        shell: bash
         run: |
+          set -euxo pipefail
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          test -x "$(pwd)/clang/bin/clang"
 
       - name: Setup Ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
+            ccache-${{ runner.os }}-${{ github.ref_name }}-
             ccache-${{ runner.os }}-
 
       - name: Build Kernel
+        shell: bash
         run: |
+          set -euxo pipefail
           export ARCH=arm64
           export SUBARCH=arm64
           export PATH="$(pwd)/clang/bin:$PATH"
 
-          # defconfig laden (mit Fallback, falls surya_defconfig im vendor-Ordner liegt)
-          make O=out surya_defconfig || make O=out vendor/surya-perf_defconfig || make O=out vendor/surya_defconfig
-          
-          # Kompilieren mit Proton Clang und Ubuntu GCC Fallback
-          make -j$(nproc) O=out \
+          # Defconfig-Check mit sauberer Reihenfolge
+          if ! make O=out surya_defconfig; then
+            if [ -f "arch/arm64/configs/vendor/surya-perf_defconfig" ]; then
+              make O=out vendor/surya-perf_defconfig
+            elif [ -f "arch/arm64/configs/vendor/surya_defconfig" ]; then
+              make O=out vendor/surya_defconfig
+            else
+              echo "Fehler: Keine gültige defconfig gefunden!"
+              exit 1
+            fi
+          fi
+
+          # Hauptkompilierung mit allen wichtigen LLVM/Clang-Flags
+          make -j"$(nproc)" O=out \
             ARCH=arm64 \
+            LLVM=1 \
             CC=clang \
+            LD=ld.lld \
+            HOSTCC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             AR=llvm-ar \
@@ -58,11 +81,28 @@ jobs:
             STRIP=llvm-strip
 
       - name: Prepare AnyKernel3 Packaging
+        shell: bash
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp out/arch/arm64/boot/Image.gz AnyKernel3/ || cp out/arch/arm64/boot/Image AnyKernel3/
+          set -euxo pipefail
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          
+          KERNEL_IMAGE=""
+          for candidate in out/arch/arm64/boot/Image.gz-dtb out/arch/arm64/boot/Image.gz out/arch/arm64/boot/Image; do
+            if [ -f "$candidate" ]; then
+              KERNEL_IMAGE="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo "Fehler: Kein Kernel-Image gefunden!"
+            find out -maxdepth 4 -type f | head -200
+            exit 1
+          fi
+
+          cp "$KERNEL_IMAGE" AnyKernel3/
           cd AnyKernel3
-          zip -r9 ../Surya-OC-Kernel-A17.zip * -x .git\* README.md *placeholder
+          zip -r9 ../Surya-OC-Kernel-A17.zip . -x .git\* README.md *placeholder
 
       - name: Upload Flashable Kernel Artifact
         uses: actions/upload-artifact@v4
