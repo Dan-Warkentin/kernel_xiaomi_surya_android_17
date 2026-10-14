@@ -21,13 +21,9 @@ jobs:
             git bc bison build-essential ccache curl flex \
             libssl-dev libncurses-dev libelf-dev python3 \
             rsync unzip zip lz4 zstd \
+            clang llvm lld \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
-
-      - name: Setup Clang Toolchain
-        uses: Rikais/setup-clang@v1
-        with:
-          version: '17'
 
       - name: Setup Ccache
         uses: actions/cache@v4
@@ -48,9 +44,7 @@ jobs:
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 \
-            LLVM_IAS=1
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
       - name: Prepare AnyKernel3 Packaging
         run: |
