@@ -20,7 +20,9 @@ jobs:
           sudo apt-get install -y \
             git bc bison build-essential ccache curl flex \
             libssl-dev libncurses-dev libelf-dev python3 \
-            rsync unzip zip lz4 zstd wget
+            rsync unzip zip lz4 zstd wget \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
 
       - name: Download Proton Clang
         run: |
@@ -40,7 +42,10 @@ jobs:
           export SUBARCH=arm64
           export PATH="$(pwd)/clang/bin:$PATH"
 
-          make O=out surya_defconfig
+          # defconfig laden (mit Fallback, falls surya_defconfig im vendor-Ordner liegt)
+          make O=out surya_defconfig || make O=out vendor/surya-perf_defconfig || make O=out vendor/surya_defconfig
+          
+          # Kompilieren mit Proton Clang und Ubuntu GCC Fallback
           make -j$(nproc) O=out \
             ARCH=arm64 \
             CC=clang \
