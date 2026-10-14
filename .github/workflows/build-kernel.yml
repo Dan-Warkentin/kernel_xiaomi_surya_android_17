@@ -20,10 +20,11 @@ jobs:
           sudo apt-get install -y \
             git bc bison build-essential ccache curl flex \
             libssl-dev libncurses-dev libelf-dev python3 \
-            rsync unzip zip lz4 zstd \
-            clang llvm lld \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
+            rsync unzip zip lz4 zstd wget
+
+      - name: Download Proton Clang
+        run: |
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
       - name: Setup Ccache
         uses: actions/cache@v4
@@ -37,16 +38,14 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          
+          export PATH="$(pwd)/clang/bin:$PATH"
+
           make O=out surya_defconfig
           make -j$(nproc) O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 \
-            LLVM_IAS=1
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
       - name: Prepare AnyKernel3 Packaging
         run: |
