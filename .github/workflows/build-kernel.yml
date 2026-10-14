@@ -20,15 +20,8 @@ jobs:
           sudo apt-get install -y \
             git bc bison build-essential ccache curl flex g++-multilib \
             gcc-multilib libssl-dev libncurses-dev libelf-dev python3 \
-            rsync unzip zip dwarves lz4 zstd
-
-      - name: Download Toolchain (AOSP Clang)
-        run: |
-          mkdir -p toolchain
-          cd toolchain
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz
-          tar -xf clang-r522817.tar.gz -C .
-          cd ..
+            rsync unzip zip dwarves lz4 zstd \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Setup Ccache
         uses: actions/cache@v4
@@ -42,10 +35,8 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          export PATH="$(pwd)/toolchain/bin:$PATH"
-          export CC=clang
+          export CC=aarch64-linux-gnu-gcc
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
 
           make O=out surya_defconfig
           make -j$(nproc) O=out
