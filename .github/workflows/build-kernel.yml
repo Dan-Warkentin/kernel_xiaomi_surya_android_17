@@ -9,18 +9,24 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      OUT_DIR: out
+      CLANG_DIR: clang
+      ZIP_NAME: Surya-OC-Kernel-A17.zip
 
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           submodules: recursive
-          fetch-depth: 1
 
-      - name: Setup Build Dependencies
+      - name: Install Build Dependencies
         shell: bash
         run: |
-          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             git bc bison build-essential ccache curl flex \
@@ -32,48 +38,59 @@ jobs:
       - name: Download Proton Clang
         shell: bash
         run: |
-          set -euxo pipefail
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
-          test -x "$(pwd)/clang/bin/clang"
+          rm -rf "${CLANG_DIR}"
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git "${CLANG_DIR}"
+          if [ ! -x "${CLANG_DIR}/bin/clang" ]; then
+            echo "clang not found in ${CLANG_DIR}/bin - aborting"
+            ls -al "${CLANG_DIR}" || true
+            exit 1
+          fi
 
-      - name: Setup Ccache
+      - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-kernel-${{ env.ARCH }}-${{ hashFiles('.github/workflows/build-kernel.yml') }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ github.ref_name }}-
-            ccache-${{ runner.os }}-
+            ccache-${{ runner.os }}-kernel-${{ env.ARCH }}-
 
       - name: Build Kernel
         shell: bash
         run: |
           set -euxo pipefail
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export PATH="$(pwd)/clang/bin:$PATH"
 
-          # Defconfig-Check mit sauberer Reihenfolge
-          if ! make O=out surya_defconfig; then
-            if [ -f "arch/arm64/configs/vendor/surya-perf_defconfig" ]; then
-              make O=out vendor/surya-perf_defconfig
-            elif [ -f "arch/arm64/configs/vendor/surya_defconfig" ]; then
-              make O=out vendor/surya_defconfig
-            else
-              echo "Fehler: Keine gültige defconfig gefunden!"
-              exit 1
-            fi
+          export PATH="$(pwd)/${CLANG_DIR}/bin:$PATH"
+          export CC=clang
+          export LLVM=1
+          export LD=ld.lld
+          export HOSTCC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+          mkdir -p "${OUT_DIR}"
+
+          # Prefer exact arch defconfig if present, otherwise try vendor paths.
+          if [ -f "arch/arm64/configs/surya_defconfig" ]; then
+            make O="${OUT_DIR}" ARCH=${ARCH} surya_defconfig
+          elif [ -f "arch/arm64/configs/vendor/surya-perf_defconfig" ]; then
+            make O="${OUT_DIR}" ARCH=${ARCH} vendor/surya-perf_defconfig
+          elif [ -f "arch/arm64/configs/vendor/surya_defconfig" ]; then
+            make O="${OUT_DIR}" ARCH=${ARCH} vendor/surya_defconfig
+          else
+            echo "No surya defconfig found (looked in arch/arm64/configs and arch/arm64/configs/vendor)."
+            ls -R arch/arm64/configs | sed -n '1,200p'
+            exit 1
           fi
 
-          # Hauptkompilierung mit allen wichtigen LLVM/Clang-Flags
-          make -j"$(nproc)" O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            CC=clang \
-            LD=ld.lld \
-            HOSTCC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          # Build with LLVM/Clang and fallback toolchain compatibility flags set.
+          make -j"$(nproc)" O="${OUT_DIR}" \
+            ARCH=${ARCH} \
+            LLVM=${LLVM} \
+            CC=${CC} \
+            LD=${LD} \
+            HOSTCC=${HOSTCC} \
+            CROSS_COMPILE=${CROSS_COMPILE} \
+            CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32} \
             AR=llvm-ar \
             NM=llvm-nm \
             OBJCOPY=llvm-objcopy \
@@ -84,28 +101,37 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
+          rm -rf AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          
+
           KERNEL_IMAGE=""
-          for candidate in out/arch/arm64/boot/Image.gz-dtb out/arch/arm64/boot/Image.gz out/arch/arm64/boot/Image; do
+          for candidate in \
+            ${OUT_DIR}/arch/arm64/boot/Image.gz-dtb \
+            ${OUT_DIR}/arch/arm64/boot/Image.lz4 \
+            ${OUT_DIR}/arch/arm64/boot/Image.gz \
+            ${OUT_DIR}/arch/arm64/boot/Image \
+            ${OUT_DIR}/arch/arm64/boot/zImage \
+            ${OUT_DIR}/arch/arm64/boot/Image-dtb; do
             if [ -f "$candidate" ]; then
               KERNEL_IMAGE="$candidate"
               break
             fi
           done
 
-          if [ -z "$KERNEL_IMAGE" ]; then
-            echo "Fehler: Kein Kernel-Image gefunden!"
-            find out -maxdepth 4 -type f | head -200
+          if [ -z "${KERNEL_IMAGE}" ]; then
+            echo "Kernel image not found - listing ${OUT_DIR}/arch/arm64/boot:"
+            ls -al ${OUT_DIR}/arch/arm64/boot || true
+            find ${OUT_DIR} -maxdepth 6 -type f -name 'Image*' -o -name 'zImage' -o -name '*.dtb' || true
             exit 1
           fi
 
-          cp "$KERNEL_IMAGE" AnyKernel3/
+          cp "${KERNEL_IMAGE}" AnyKernel3/
           cd AnyKernel3
-          zip -r9 ../Surya-OC-Kernel-A17.zip . -x .git\* README.md *placeholder
+          zip -r9 "../${ZIP_NAME}" . -x .git\* README.md *placeholder
 
       - name: Upload Flashable Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Surya-OC-Kernel-A17
-          path: Surya-OC-Kernel-A17.zip
+          path: ${{ env.ZIP_NAME }}
