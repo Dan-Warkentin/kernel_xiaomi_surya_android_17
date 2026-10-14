@@ -1,0 +1,64 @@
+name: Build Custom Surya Kernel (Android 17)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+
+      - name: Setup Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git bc bison build-essential ccache curl flex g++-multilib \
+            gcc-multilib libssl-dev libncurses-dev libelf-dev python3 \
+            rsync unzip zip dwarves lz4 zstd libpfx-dev
+
+      - name: Download Toolchain (AOSP Clang)
+        run: |
+          mkdir -p toolchain
+          cd toolchain
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz
+          tar -xf clang-r522817.tar.gz -C .
+          cd ..
+
+      - name: Setup Ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Build Kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export PATH="$(pwd)/toolchain/bin:$PATH"
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+
+          make O=out surya_defconfig
+          make -j$(nproc) O=out
+
+      - name: Prepare AnyKernel3 Packaging
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp out/arch/arm64/boot/Image.gz AnyKernel3/ || cp out/arch/arm64/boot/Image AnyKernel3/
+          cd AnyKernel3
+          zip -r9 ../Surya-OC-Kernel-A17.zip * -x .git\* README.md *placeholder
+
+      - name: Upload Flashable Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Surya-OC-Kernel-A17
+          path: Surya-OC-Kernel-A17.zip
